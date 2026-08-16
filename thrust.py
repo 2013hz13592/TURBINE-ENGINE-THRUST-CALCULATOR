@@ -270,14 +270,9 @@ else:
 # PR = (T4 / TET)^(gamma/(gamma-1)) for isentropic process
 # Since we have actual T4, calculate the implied pressure ratio
 if T4_temp < TET:
-	PR_turbine_implied = (T4_temp / TET) ** (gamma_hot / (gamma_hot - 1))
+	PR_turbine_implied = (TET / T4_temp) ** (gamma_hot / (gamma_hot - 1))
 else:
 	PR_turbine_implied = Compressor_Design_Pressure_Ratio
-
-# Turbine pressure ratio selection with calculated default
-print("  Turbine pressure ratio:\n")
-print("     Calculated from entry/exit temperatures: {:.3f}".format(PR_turbine_implied))
-print("     Or enter a custom value\n")
 
 PR_turbine = _get_float(
 	"Turbine pressure ratio",
