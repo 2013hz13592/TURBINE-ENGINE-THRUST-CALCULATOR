@@ -1,4 +1,4 @@
 # TURBINE-ENGINE-THRUST-CALCULATOR
-Requirements
-Install Python https://www.python.org/downloads/<br>
-Run pip install CoolProp from command prompt
+Requirements<br>
+1)Install Python https://www.python.org/downloads/<br>
+2)Run pip install CoolProp from command prompt
