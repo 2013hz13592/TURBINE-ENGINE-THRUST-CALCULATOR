@@ -20,6 +20,8 @@
 ================================================================================
 """
 
+import math
+
 def _get_float(prompt, default=None, validator=None, err_msg=None):
 	"""Prompt for a float with optional default and validator.
 	Returns a float. Keeps prompting until valid input is given.
@@ -47,6 +49,46 @@ def _get_float(prompt, default=None, validator=None, err_msg=None):
 			continue
 		print(f"     ✓ Value accepted: {value}\n")
 		return value
+
+
+def _get_compressor_pressure_ratios():
+	"""Get compressor pressure ratios either by stage or as one overall ratio."""
+	while True:
+		mode = input(
+			"  Compressor pressure-ratio input mode (1=LP and HP separately, 2=overall)\n"
+			"     [default: 1] → "
+		).strip()
+		if mode == "":
+			mode = "1"
+		if mode not in ("1", "2"):
+			print("     ✗ Please enter 1 or 2.\n")
+			continue
+		break
+
+	if mode == "1":
+		low_pressure_ratio = _get_float(
+			"Low-pressure compressor (LPC) pressure ratio (unitless, >=1)",
+			default=3.0,
+			validator=lambda x: x >= 1.0,
+			err_msg="Pressure ratio must be >= 1.0",
+		)
+		high_pressure_ratio = _get_float(
+			"High-pressure compressor (HPC) pressure ratio (unitless, >=1)",
+			default=5.0,
+			validator=lambda x: x >= 1.0,
+			err_msg="Pressure ratio must be >= 1.0",
+		)
+		return low_pressure_ratio, high_pressure_ratio
+
+	overall_ratio = _get_float(
+		"Overall compressor pressure ratio (unitless, >=1)",
+		default=15.0,
+		validator=lambda x: x >= 1.0,
+		err_msg="Pressure ratio must be >= 1.0",
+	)
+	stage_ratio = math.sqrt(overall_ratio)
+	print(f"     ✓ Equal stage pressure ratios: {stage_ratio:.4f} (LPC and HPC)\n")
+	return stage_ratio, stage_ratio
 
 
 
@@ -100,21 +142,38 @@ print("\n" + "="*60)
 print("  COMPRESSOR & TURBINE CONFIGURATION")
 print("="*60 + "\n")
 
-Compressor_Design_Pressure_Ratio = _get_float(
-	"Compressor design pressure ratio (unitless, >=1)",
-	default=1.0,
-	validator=lambda x: x >= 1.0,
-	err_msg="Pressure ratio must be >= 1.0",
-)
+Compressor_Stage_1_Pressure_Ratio, Compressor_Stage_2_Pressure_Ratio = _get_compressor_pressure_ratios()
 Compressor_And_Turbine_Efficiency = _get_float(
-	"Compressor efficiency (fraction, e.g. 0.85)",
-	default=0.85,
+	"Compressor efficiency per stage (fraction, e.g. 0.88)",
+	default=0.88,
 	validator=lambda x: 0.0 < x <= 1.0,
 	err_msg="Efficiency must be between 0 (exclusive) and 1 (inclusive)",
 )
-Inlet_Mass_Flow_Rate = _get_float(
-	"Inlet mass flow rate (kg/s)", default=1.0, validator=lambda x: x > 0.0, err_msg="Must be > 0"
+Core_Mass_Flow_Rate = _get_float(
+	"Core mass flow rate (kg/s)", default=1.0, validator=lambda x: x > 0.0, err_msg="Must be > 0"
 )
+Bypass_Ratio = _get_float(
+	"Bypass ratio (dimensionless, 0 for turbojet)",
+	default=2.0,
+	validator=lambda x: x >= 0.0,
+	err_msg="Bypass ratio must be >= 0",
+)
+Bleed_Percentage = _get_float(
+	"Bleed air extracted from core flow (%)",
+	default=0.0,
+	validator=lambda x: 0.0 <= x <= 100.0,
+	err_msg="Bleed percentage must be between 0 and 100",
+)
+Bleed_Fraction = Bleed_Percentage / 100.0
+Usable_Core_Mass_Flow_Rate = Core_Mass_Flow_Rate * (1.0 - Bleed_Fraction)
+Inlet_Mass_Flow_Rate = Core_Mass_Flow_Rate * (1 + Bypass_Ratio)
+Compressor_Design_Pressure_Ratio = Compressor_Stage_1_Pressure_Ratio * Compressor_Stage_2_Pressure_Ratio
+print(f"Overall two-stage military turbofan compressor pressure ratio: {Compressor_Design_Pressure_Ratio:.4f}")
+print(f"Core mass flow rate: {Core_Mass_Flow_Rate:.3f} kg/s")
+print(f"Bleed air extracted: {Bleed_Percentage:.2f}% ({Bleed_Fraction:.4f} fraction)")
+print(f"Usable core mass flow rate: {Usable_Core_Mass_Flow_Rate:.3f} kg/s")
+print(f"Bypass ratio: {Bypass_Ratio:.3f}")
+print(f"Total inlet mass flow rate: {Inlet_Mass_Flow_Rate:.3f} kg/s")
 
 print("="*60)
 print("  TEMPERATURE INPUTS")
@@ -122,9 +181,10 @@ print("="*60 + "\n")
 
 TET = _get_temp("Turbine entry temperature", default=1400.0, default_unit='K', validator=lambda x: x > 0.0)
 
-# Compressor outlet temperature calculation (T3)
-# Using: T3 = T2 * (1 + (PR^((gamma-1)/gamma) - 1)/eta_c)
-# Inlet temperature (T2) as input (accept °C, convert to K)
+# Two-stage military turbofan compressor model.
+# This assumes a conventional series compressor without intercooling: stage 2 starts from
+# the outlet temperature of stage 1 and continues to the final compressor discharge pressure.
+# The overall compressor pressure ratio is the product of the LPC and HPC pressure ratios.
 temp_k = _get_temp(
 	"Inlet temperature", default=15.0, default_unit='C', validator=lambda x: x > 0.0, err_msg="Temperature must be > -273.15°C",
 )
@@ -153,12 +213,25 @@ except Exception:
 	cp = 1004.5
 	print("CoolProp not available; using constants: Cp=1004.5 J/kg/K, gamma=1.4. Install with: pip install CoolProp")
 
-# Compressor outlet temperature and work calculation
-# T3 calculated using isentropic temperature rise formula: T3 = T2 * (1 + (PR^((gamma-1)/gamma) - 1) / eta_c)
-# Compressor work is the enthalpy change required to compress air from T2 to T3
-T3 = T2 * (1 + (PR**((gamma - 1) / gamma) - 1) / eta_c)
-print(f"Compressor outlet temperature (T3): {T3:.2f} K")
-Compressor_Work = Inlet_Mass_Flow_Rate * cp * (T3 - T2)
+# Two-stage military turbofan compressor model.
+# This assumes a typical series compressor with no intercooler: stage 2 starts from the outlet
+# temperature of stage 1 and continues to the final compressor discharge pressure.
+PR1 = Compressor_Stage_1_Pressure_Ratio
+PR2 = Compressor_Stage_2_Pressure_Ratio
+
+T_stage1_out = T2 * (1 + (math.pow(PR1, (gamma - 1) / gamma) - 1) / eta_c)
+T_stage2_out = T_stage1_out * (1 + (math.pow(PR2, (gamma - 1) / gamma) - 1) / eta_c)
+T3 = T_stage2_out
+
+print(f"Two-stage military turbofan compressor characteristics:")
+print(f"  LPC pressure ratio: {PR1:.4f}")
+print(f"  HPC pressure ratio: {PR2:.4f}")
+print(f"  LPC outlet temperature: {T_stage1_out:.2f} K")
+print(f"  HPC outlet temperature: {T_stage2_out:.2f} K")
+print(f"  Compressor outlet temperature (T3): {T3:.2f} K")
+
+# Total compressor work for a two-stage military turbofan compressor without intercooling
+Compressor_Work = Usable_Core_Mass_Flow_Rate * cp * (T3 - T2)
 print(f"Compressor work: {Compressor_Work:.2f} W")
 
 # Combustion heat input (Q_in) calculation
@@ -182,7 +255,7 @@ except Exception:
 # Calculate total heat energy required in combustor
 # Q_in = mass flow rate × specific heat capacity × temperature rise
 # This represents the thermal energy needed to heat air from compressor outlet (T3) to turbine inlet (TET)
-Q_in = Inlet_Mass_Flow_Rate * cp_combustion * (TET - T3)
+Q_in = Usable_Core_Mass_Flow_Rate * cp_combustion * (TET - T3)
 print(f"Combustion heat input (Q_in): {Q_in:.2f} W")
 
 # Fuel consumption calculation
@@ -236,19 +309,24 @@ try:
 except Exception:
 	gamma_hot = gamma
 
-# Adjust mass flow rate for turbine section: include fuel mass added in combustor
-# Total mass flow through turbine = inlet air mass flow + fuel mass flow
-Total_Mass_Flow_Turbine = Inlet_Mass_Flow_Rate + Weight_Fuel_Flow
-print(f"Air mass flow rate: {Inlet_Mass_Flow_Rate:.6f} kg/s")
+# Adjust mass flow rate for turbine section: include fuel mass added in combustor.
+# For a turbofan, the total incoming air is split into core flow and bypass flow.
+# The usable core flow is the air remaining after bleed extraction.
+Bypass_Mass_Flow_Rate = Core_Mass_Flow_Rate * Bypass_Ratio
+Total_Mass_Flow_Turbine = Usable_Core_Mass_Flow_Rate + Weight_Fuel_Flow
+print(f"Core air mass flow rate: {Core_Mass_Flow_Rate:.6f} kg/s")
+print(f"Bleed air removed: {Core_Mass_Flow_Rate * Bleed_Fraction:.6f} kg/s")
+print(f"Usable core air mass flow rate: {Usable_Core_Mass_Flow_Rate:.6f} kg/s")
+print(f"Bypass air mass flow rate: {Bypass_Mass_Flow_Rate:.6f} kg/s")
 print(f"Fuel mass flow rate: {Weight_Fuel_Flow:.6f} kg/s")
-print(f"Total mass flow through turbine: {Total_Mass_Flow_Turbine:.6f} kg/s\n")
+print(f"Total mass flow through turbine core: {Total_Mass_Flow_Turbine:.6f} kg/s\n")
 
 # Calculate T4 with assumed temporary pressure ratio to determine implied pressure ratio
 PR_turbine_temp = Compressor_Design_Pressure_Ratio
 
 if turbine_method == 1:
 	# Calculate isentropic exit temperature using hot section gamma
-	T4_ideal_temp = TET / (PR_turbine_temp ** ((gamma_hot - 1) / gamma_hot))
+	T4_ideal_temp = TET / math.pow(PR_turbine_temp, (gamma_hot - 1) / gamma_hot)
 	# Calculate actual turbine exit temperature using efficiency
 	T4_temp = TET - (Turbine_Efficiency * (TET - T4_ideal_temp))
 else:
@@ -270,7 +348,7 @@ else:
 # PR = (T4 / TET)^(gamma/(gamma-1)) for isentropic process
 # Since we have actual T4, calculate the implied pressure ratio
 if T4_temp < TET:
-	PR_turbine_implied = (TET / T4_temp) ** (gamma_hot / (gamma_hot - 1))
+	PR_turbine_implied = math.pow(TET / T4_temp, gamma_hot / (gamma_hot - 1))
 else:
 	PR_turbine_implied = Compressor_Design_Pressure_Ratio
 
@@ -288,7 +366,7 @@ if turbine_method == 1:
 	# T4 = TET - eta_turbine × (TET - T4_ideal)
 
 	# Calculate isentropic exit temperature using hot section gamma
-	T4_ideal = TET / (PR_turbine ** ((gamma_hot - 1) / gamma_hot))
+	T4_ideal = TET / math.pow(PR_turbine, (gamma_hot - 1) / gamma_hot)
 
 	# Calculate actual turbine exit temperature using efficiency
 	T4 = TET - (Turbine_Efficiency * (TET - T4_ideal))
@@ -361,7 +439,7 @@ print(f"     Hot section gamma at TET: {gamma_hot:.5f}\n")
 
 # Calculate actual turbine exit pressure from isentropic relation
 # P4 = P3 × (T4 / TET)^(gamma/(gamma-1))
-P4 = P3 * ((T4 / TET) ** (gamma_hot / (gamma_hot - 1)))
+P4 = P3 * math.pow(T4 / TET, gamma_hot / (gamma_hot - 1))
 
 print(f"     Inlet pressure: {P_inlet / 1000:.2f} kPa")
 print(f"     Compressor outlet pressure (P3): {P3 / 1000:.2f} kPa")
@@ -407,7 +485,7 @@ print(f"  Gamma: {gamma_nozzle:.5f}\n")
 # Critical pressure ratio: P*/P0 = (2/(gamma + 1))^(gamma/(gamma - 1))
 
 T_critical = T0_nozzle * (2 / (gamma_nozzle + 1))
-P_critical = P0_nozzle * ((2 / (gamma_nozzle + 1)) ** (gamma_nozzle / (gamma_nozzle - 1)))
+P_critical = P0_nozzle * math.pow(2 / (gamma_nozzle + 1), gamma_nozzle / (gamma_nozzle - 1))
 
 print(f"Critical (sonic) conditions at throat:")
 print(f"  Critical temperature (T*): {T_critical:.2f} K ({T_critical - 273.15:.2f} °C)")
@@ -418,7 +496,7 @@ print(f"  Pressure ratio (P*/P0): {P_critical / P0_nozzle:.5f}\n")
 # Speed of sound at critical temperature
 # a* = sqrt(gamma * R_specific * T*)
 R_gas = 287.05  # Specific gas constant for air (J/kg/K)
-a_critical = (gamma_nozzle * R_gas * T_critical) ** 0.5
+a_critical = math.sqrt(gamma_nozzle * R_gas * T_critical)
 
 print(f"Speed of sound at critical conditions:")
 print(f"  a* = {a_critical:.2f} m/s\n")
@@ -433,12 +511,17 @@ V_exit_sonic = a_critical
 print(f"Exit velocity (choked nozzle):")
 print(f"  Sonic exit velocity (V_exit = a*): {V_exit_sonic:.2f} m/s\n")
 
-# Mass flow rate through nozzle
-# Same as turbine exit mass flow (continuity)
-mdot_nozzle = Total_Mass_Flow_Turbine
+# Mass flow rate through the core nozzle and bypass stream.
+# The core flow is the gas stream passing through the turbine and core nozzle.
+# The bypass air is accelerated in the fan stream and contributes additional thrust.
+mdot_core_nozzle = Total_Mass_Flow_Turbine
+mdot_bypass_nozzle = Bypass_Mass_Flow_Rate
+mdot_nozzle = mdot_core_nozzle + mdot_bypass_nozzle
 
 print(f"Nozzle mass flow rate:")
-print(f"  ṁ = {mdot_nozzle:.6f} kg/s\n")
+print(f"  Core nozzle ṁ = {mdot_core_nozzle:.6f} kg/s")
+print(f"  Bypass nozzle ṁ = {mdot_bypass_nozzle:.6f} kg/s")
+print(f"  Total nozzle ṁ = {mdot_nozzle:.6f} kg/s\n")
 
 # Calculate nozzle throat area from mass flow rate, velocity, and density
 # Using continuity equation: A = mdot / (rho * V)
@@ -452,27 +535,34 @@ A_throat = mdot_nozzle / (rho_critical * V_exit_sonic)
 print(f"Nozzle throat area calculation:")
 print(f"  Density at critical conditions: {rho_critical:.4f} kg/m³")
 print(f"  Throat area (A*): {A_throat:.6f} m²")
-print(f"  Throat diameter: {(2 * (A_throat / 3.14159) ** 0.5):.4f} m")
-print(f"  Throat diameter: {(2 * (A_throat / 3.14159) ** 0.5) * 1000:.2f} mm\n")
+print(f"  Throat diameter: {2 * math.sqrt(A_throat / 3.14159):.4f} m")
 
 # Total thrust calculation for choked convergent nozzle
 # For a choked nozzle, exit conditions occur at the throat (sonic conditions)
 # Total thrust = Momentum thrust + Pressure thrust
 
-# 1. Momentum thrust: F_momentum = mdot × V_exit
-F_momentum = mdot_nozzle * V_exit_sonic
+# 1. Core momentum thrust: F_momentum = mdot_core × V_exit
+F_momentum = mdot_core_nozzle * V_exit_sonic
 
-# 2. Pressure thrust: F_pressure = (P_exit - P_ambient) × A_exit
+# 2. Core pressure thrust: F_pressure = (P_exit - P_ambient) × A_exit
 #    For choked convergent nozzle: P_exit = P_critical, A_exit = A_throat
 P_ambient = P_inlet  # Sea level atmospheric pressure
 F_pressure = (P_critical - P_ambient) * A_throat
 
-# 3. Total thrust
-F_total_nozzle = F_momentum + F_pressure
+# 3. Bypass stream thrust contribution for a turbofan engine
+#    A simple first-order model assumes the bypass stream exits at similar velocity to the core nozzle.
+#    This approximates the extra thrust due to the bypass flow without adding a separate fan nozzle model.
+F_bypass = mdot_bypass_nozzle * V_exit_sonic
+
+# The bypass flow should not include any bleed extracted from the core stream.
+# This keeps the bypass thrust calculation consistent with the usable core mass flow model.
+
+# 4. Total thrust
+F_total_nozzle = F_momentum + F_pressure + F_bypass
 
 # Summary
 print("="*60)
-print("  NOZZLE PERFORMANCE SUMMARY")
+print("  TURBOFAN THRUST SUMMARY")
 print("="*60 + "\n")
 print("Nozzle Configuration:")
 print(f"  Type: Choked convergent nozzle")
@@ -481,10 +571,12 @@ print("Exit Conditions:")
 print(f"  Temperature: {T_critical:.2f} K ({T_critical - 273.15:.2f} °C)")
 print(f"  Pressure: {P_critical / 1000:.2f} kPa")
 print(f"  Velocity: {V_exit_sonic:.2f} m/s")
-print(f"  Throat diameter: {(2 * (A_throat / 3.14159) ** 0.5) * 1000:.2f} mm\n")
+print(f"  Throat area: {A_throat:.6f} m²")
+print(f"  Throat diameter: {2 * math.sqrt(A_throat / 3.14159) * 1000:.2f} mm\n")
 print("Thrust Breakdown:")
-print(f"  Momentum thrust: {F_momentum:.2f} N ({F_momentum / 1000:.3f} kN)")
-print(f"  Pressure thrust:  {F_pressure:.2f} N ({F_pressure / 1000:.3f} kN)")
+print(f"  Core Momentum thrust: {F_momentum:.2f} N ({F_momentum / 1000:.3f} kN)")
+print(f"  Bypass thrust:    {F_bypass:.2f} N ({F_bypass / 1000:.3f} kN)")
+print(f"  Pressure thrust (Choked Convergent Nozzle):  {F_pressure:.2f} N ({F_pressure / 1000:.3f} kN)")
 print(f"  ─────────────────────────────────────")
-print(f"  Total nozzle thrust: {F_total_nozzle:.2f} N ({F_total_nozzle / 1000:.3f} kN)\n")
+print(f"  Total gross nozzle thrust: {F_total_nozzle:.2f} N ({F_total_nozzle / 1000:.3f} kN)\n")
 
